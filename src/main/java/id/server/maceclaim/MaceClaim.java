@@ -1,3 +1,4 @@
+
 package id.server.maceclaim;
 
 import java.util.UUID;
@@ -7,6 +8,9 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -29,7 +33,7 @@ public final class MaceClaim extends JavaPlugin
     private long endTime;
     private UUID lastHolder;
     private long lastAnnouncement;
-    private long lastCoordinateAnnouncement;
+    private BossBar bossBar;
 
     @Override
     public void onEnable() {
@@ -38,11 +42,19 @@ public final class MaceClaim extends JavaPlugin
         active = getConfig().getBoolean("event.active", false);
         endTime = getConfig().getLong("event.end-time", 0L);
 
+        bossBar = Bukkit.createBossBar(
+            "Mace Claim", BarColor.PURPLE, BarStyle.SOLID
+        );
+        bossBar.setVisible(false);
+
         Bukkit.getPluginManager().registerEvents(this, this);
         getCommand("mace").setExecutor(this);
 
         Bukkit.getScheduler().runTaskTimer(this, () -> {
-            if (!active) return;
+            if (!active) {
+                bossBar.setVisible(false);
+                return;
+            }
 
             if (System.currentTimeMillis() >= endTime) {
                 finishEvent();
@@ -50,55 +62,73 @@ public final class MaceClaim extends JavaPlugin
             }
 
             Player holder = findHolder();
+            long remaining = Math.max(
+                0L, endTime - System.currentTimeMillis()
+            );
 
-            UUID current = holder == null ? null : holder.getUniqueId();
-
-            if (current == null && lastHolder != null) {
-                Bukkit.broadcastMessage(
-                    "§c[Mace] Mace jatuh atau tidak sedang dipegang! Timer tetap berjalan."
+            if (holder == null) {
+                bossBar.setTitle(
+                    "§dMACE CLAIM §8| §cTidak ada pemegang"
+                    + " §8| §e" + formatTime(remaining)
                 );
+
+                if (lastHolder != null) {
+                    Bukkit.broadcastMessage(
+                        "§c[Mace] Mace tidak sedang dipegang!"
+                    );
+                }
+
+                lastHolder = null;
+            } else {
+                Location loc = holder.getLocation();
+                World world = loc.getWorld();
+
+                bossBar.setTitle(
+                    "§dMACE §8| §f" + holder.getName()
+                    + " §8| §b" + world.getName()
+                    + " §8X: §e" + loc.getBlockX()
+                    + " §8Y: §e" + loc.getBlockY()
+                    + " §8Z: §e" + loc.getBlockZ()
+                    + " §8| §a" + formatTime(remaining)
+                );
+
+                if (!holder.getUniqueId().equals(lastHolder)) {
+                    Bukkit.broadcastMessage(
+                        "§6[Mace] §e" + holder.getName()
+                        + " §fsekarang memegang Mace!"
+                    );
+                }
+
+                lastHolder = holder.getUniqueId();
             }
 
-            if (current != null && !current.equals(lastHolder)) {
+            bossBar.setProgress(
+                Math.max(0.0, Math.min(1.0,
+                    (double) remaining / (45L * 60L * 1000L)))
+            );
+            bossBar.setVisible(true);
+
+            if (System.currentTimeMillis() - lastAnnouncement >= 60000L) {
                 Bukkit.broadcastMessage(
-                    "§6[Mace] §e" + holder.getName()
-                    + " §fsekarang memegang Mace!"
+                    "§6[Mace] §fSisa waktu: §e" + formatTime(remaining)
                 );
-                announceCoordinates(holder);
-            }
-
-            lastHolder = current;
-
-            long now = System.currentTimeMillis();
-
-            if (holder != null && now - lastCoordinateAnnouncement >= 30000L) {
-                announceCoordinates(holder);
-                lastCoordinateAnnouncement = now;
-            }
-
-            if (now - lastAnnouncement >= 60000L) {
-                long minutes = Math.max(
-                    0L, (endTime - now + 59999L) / 60000L
-                );
-
-                Bukkit.broadcastMessage(
-                    "§6[Mace] §fSisa waktu perebutan: §e"
-                    + minutes + " menit."
-                );
-
-                lastAnnouncement = now;
+                lastAnnouncement = System.currentTimeMillis();
             }
         }, 20L, 20L);
 
         if (active && endTime <= System.currentTimeMillis()) {
             finishEvent();
-        } else if (active) {
-            Bukkit.broadcastMessage(
-                "§6[Mace] Event dilanjutkan setelah server menyala kembali."
-            );
         }
 
         getLogger().info("MaceClaim berhasil dimuat.");
+    }
+
+    @Override
+    public void onDisable() {
+        if (bossBar != null) {
+            bossBar.removeAll();
+        }
+        saveState();
     }
 
     @Override
@@ -113,9 +143,7 @@ public final class MaceClaim extends JavaPlugin
             return true;
         }
 
-        String sub = args[0].toLowerCase();
-
-        switch (sub) {
+        switch (args[0].toLowerCase()) {
             case "help":
                 showHelp(sender);
                 return true;
@@ -125,13 +153,13 @@ public final class MaceClaim extends JavaPlugin
 
                 if (!(sender instanceof Player player)) {
                     sender.sendMessage(
-                        "Pegang Mace di dalam game, lalu jalankan /mace start."
+                        "Pegang Mace di game lalu jalankan /mace start."
                     );
                     return true;
                 }
 
                 if (active) {
-                    sender.sendMessage("§cEvent Mace sudah berjalan.");
+                    sender.sendMessage("§cEvent sudah berjalan.");
                     return true;
                 }
 
@@ -147,81 +175,77 @@ public final class MaceClaim extends JavaPlugin
                 markMace(held);
 
                 active = true;
-                endTime = System.currentTimeMillis() + 45L * 60L * 1000L;
+                endTime = System.currentTimeMillis()
+                    + 45L * 60L * 1000L;
                 lastHolder = null;
                 lastAnnouncement = System.currentTimeMillis();
-                lastCoordinateAnnouncement = 0L;
                 saveState();
+
+                for (Player online : Bukkit.getOnlinePlayers()) {
+                    bossBar.addPlayer(online);
+                }
 
                 Bukkit.broadcastMessage(
                     "§6§l[MACE] §ePEREBUTAN MACE DIMULAI!"
                 );
                 Bukkit.broadcastMessage(
-                    "§fWaktu perebutan: §c45 menit."
-                );
-                Bukkit.broadcastMessage(
-                    "§fPemegang Mace akan diumumkan beserta koordinatnya."
+                    "§fWaktu: §c45 menit. §fKoordinat pemegang tampil di Boss Bar."
                 );
                 return true;
 
             case "stop":
                 if (!isAdmin(sender)) return true;
 
-                if (!active) {
-                    sender.sendMessage("§cTidak ada event yang berjalan.");
-                    return true;
-                }
-
                 active = false;
                 endTime = 0L;
+                lastHolder = null;
                 clearAllTags();
+                bossBar.setVisible(false);
                 saveState();
 
-                Bukkit.broadcastMessage("§c[Mace] Event dihentikan admin.");
+                Bukkit.broadcastMessage("§c[Mace] Event dihentikan.");
                 return true;
 
             case "status":
-                sender.sendMessage("§6===== STATUS MACE =====");
-
                 if (!active) {
                     sender.sendMessage("§cEvent tidak aktif.");
                     return true;
                 }
 
-                long remaining = Math.max(
-                    0L, (endTime - System.currentTimeMillis()) / 1000L
+                sender.sendMessage(
+                    "§6Sisa waktu: §e"
+                    + formatTime(endTime - System.currentTimeMillis())
                 );
+
+                Player current = findHolder();
 
                 sender.sendMessage(
-                    "§fSisa waktu: §e" + (remaining / 60)
-                    + " menit " + (remaining % 60) + " detik"
+                    current == null
+                        ? "§cMace tidak sedang dipegang."
+                        : "§fPemegang: §e" + current.getName()
                 );
-
-                Player currentHolder = findHolder();
-
-                if (currentHolder == null) {
-                    sender.sendMessage("§fPemegang: §cTidak ada");
-                } else {
-                    sender.sendMessage(
-                        "§fPemegang: §e" + currentHolder.getName()
-                    );
-                }
                 return true;
 
             case "locate":
                 if (!active) {
-                    sender.sendMessage("§cEvent Mace tidak aktif.");
+                    sender.sendMessage("§cEvent tidak aktif.");
                     return true;
                 }
 
                 Player holder = findHolder();
 
                 if (holder == null) {
-                    sender.sendMessage(
-                        "§cMace sedang tidak dipegang pemain."
-                    );
+                    sender.sendMessage("§cTidak ada pemegang Mace.");
                 } else {
-                    sendCoordinates(sender, holder);
+                    Location loc = holder.getLocation();
+
+                    sender.sendMessage(
+                        "§6Pemegang: §e" + holder.getName()
+                        + " §f| Dunia: §b" + loc.getWorld().getName()
+                        + " §f| X: §e" + loc.getBlockX()
+                        + " §fY: §e" + loc.getBlockY()
+                        + " §fZ: §e" + loc.getBlockZ()
+                    );
                 }
                 return true;
 
@@ -232,9 +256,10 @@ public final class MaceClaim extends JavaPlugin
                 endTime = 0L;
                 lastHolder = null;
                 clearAllTags();
+                bossBar.setVisible(false);
                 saveState();
 
-                Bukkit.broadcastMessage("§c[Mace] Event telah direset.");
+                Bukkit.broadcastMessage("§c[Mace] Event direset.");
                 return true;
 
             default:
@@ -244,22 +269,20 @@ public final class MaceClaim extends JavaPlugin
     }
 
     private boolean isAdmin(CommandSender sender) {
-        if (sender.hasPermission("maceclaim.admin")) {
-            return true;
-        }
+        if (sender.hasPermission("maceclaim.admin")) return true;
 
-        sender.sendMessage("§cKamu tidak memiliki izin untuk melakukan itu.");
+        sender.sendMessage("§cKamu tidak punya izin.");
         return false;
     }
 
     private void showHelp(CommandSender sender) {
         sender.sendMessage("§6===== MACE CLAIM =====");
-        sender.sendMessage("§e/mace start §7- Mulai perebutan 45 menit");
+        sender.sendMessage("§e/mace start §7- Mulai event");
         sender.sendMessage("§e/mace stop §7- Hentikan event");
-        sender.sendMessage("§e/mace status §7- Cek status dan waktu");
-        sender.sendMessage("§e/mace locate §7- Cek koordinat pemegang");
+        sender.sendMessage("§e/mace status §7- Cek status");
+        sender.sendMessage("§e/mace locate §7- Cek koordinat");
         sender.sendMessage("§e/mace reset §7- Reset event");
-        sender.sendMessage("§e/mace help §7- Tampilkan bantuan");
+        sender.sendMessage("§e/mace help §7- Bantuan");
     }
 
     private void markMace(ItemStack stack) {
@@ -270,7 +293,6 @@ public final class MaceClaim extends JavaPlugin
         meta.getPersistentDataContainer().set(
             maceKey, PersistentDataType.BYTE, (byte) 1
         );
-
         stack.setItemMeta(meta);
     }
 
@@ -289,14 +311,14 @@ public final class MaceClaim extends JavaPlugin
 
     private Player findHolder() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            PlayerInventory inventory = player.getInventory();
+            PlayerInventory inv = player.getInventory();
 
-            if (isContestMace(inventory.getItemInMainHand())
-                    || isContestMace(inventory.getItemInOffHand())) {
+            if (isContestMace(inv.getItemInMainHand())
+                    || isContestMace(inv.getItemInOffHand())) {
                 return player;
             }
 
-            for (ItemStack stack : inventory.getContents()) {
+            for (ItemStack stack : inv.getContents()) {
                 if (isContestMace(stack)) return player;
             }
         }
@@ -310,47 +332,21 @@ public final class MaceClaim extends JavaPlugin
             return;
         }
 
-        ItemStack stack = event.getItem().getItemStack();
+        if (!isContestMace(event.getItem().getItemStack())) return;
 
-        if (isContestMace(stack)) {
-            Bukkit.getScheduler().runTask(this, () -> {
-                if (active && isOnline(player)) {
-                    announceCoordinates(player);
-                    lastCoordinateAnnouncement =
-                        System.currentTimeMillis();
-                }
-            });
-        }
+        Bukkit.getScheduler().runTask(this, () -> {
+            if (active && player.isOnline()) {
+                bossBar.addPlayer(player);
+            }
+        });
     }
 
-    private boolean isOnline(Player player) {
-        return player.isOnline();
-    }
+    private String formatTime(long milliseconds) {
+        long seconds = Math.max(0L, milliseconds / 1000L);
+        long minutes = seconds / 60L;
+        seconds %= 60L;
 
-    private void announceCoordinates(Player player) {
-        Location location = player.getLocation();
-
-        Bukkit.broadcastMessage(
-            "§6[Mace] §e" + player.getName()
-            + " §fmemegang Mace di §b"
-            + location.getWorld().getName()
-            + " §f(X: §e" + location.getBlockX()
-            + "§f, Y: §e" + location.getBlockY()
-            + "§f, Z: §e" + location.getBlockZ() + "§f)"
-        );
-    }
-
-    private void sendCoordinates(CommandSender sender, Player player) {
-        Location location = player.getLocation();
-        World world = location.getWorld();
-
-        sender.sendMessage(
-            "§6[Mace] §e" + player.getName()
-            + " §fberada di §b" + world.getName()
-            + " §f(X: §e" + location.getBlockX()
-            + "§f, Y: §e" + location.getBlockY()
-            + "§f, Z: §e" + location.getBlockZ() + "§f)"
-        );
+        return String.format("%02d:%02d", minutes, seconds);
     }
 
     private void saveState() {
@@ -366,6 +362,7 @@ public final class MaceClaim extends JavaPlugin
         endTime = 0L;
         lastHolder = null;
         clearAllTags();
+        bossBar.setVisible(false);
         saveState();
 
         if (winner != null) {
@@ -375,30 +372,29 @@ public final class MaceClaim extends JavaPlugin
             );
         } else {
             Bukkit.broadcastMessage(
-                "§c[MACE] Waktu habis, tetapi tidak ada pemain yang memegang Mace."
+                "§c[MACE] Waktu habis tanpa pemegang Mace."
             );
         }
     }
 
     private void clearAllTags() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            PlayerInventory inventory = player.getInventory();
+            PlayerInventory inv = player.getInventory();
 
-            for (ItemStack stack : inventory.getContents()) {
+            for (ItemStack stack : inv.getContents()) {
                 removeTag(stack);
             }
 
-            removeTag(inventory.getItemInOffHand());
-            removeTag(inventory.getItemInMainHand());
+            removeTag(inv.getItemInOffHand());
         }
 
         for (World world : Bukkit.getWorlds()) {
-            for (Item entity : world.getEntitiesByClass(Item.class)) {
-                ItemStack stack = entity.getItemStack();
+            for (Item item : world.getEntitiesByClass(Item.class)) {
+                ItemStack stack = item.getItemStack();
 
                 if (isContestMace(stack)) {
                     removeTag(stack);
-                    entity.setItemStack(stack);
+                    item.setItemStack(stack);
                 }
             }
         }
@@ -414,5 +410,5 @@ public final class MaceClaim extends JavaPlugin
         meta.getPersistentDataContainer().remove(maceKey);
         stack.setItemMeta(meta);
     }
-                }
-                         
+        }
+                
