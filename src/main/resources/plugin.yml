@@ -1,0 +1,17 @@
+
+name: MaceClaim
+version: '1.0.0'
+main: id.server.maceclaim.MaceClaim
+api-version: '1.21'
+description: 45-minute Mace claiming event.
+
+commands:
+  mace:
+    description: Mengelola event perebutan Mace
+    usage: /mace <start|stop|status|locate|reset|help>
+
+permissions:
+  maceclaim.admin:
+    description: Mengelola event perebutan Mace
+    default: op
+    
